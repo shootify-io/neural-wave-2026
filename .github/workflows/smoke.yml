@@ -35,14 +35,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # NOTE: deliberately NO `python-version` input here.  In setup-uv v5 that
+      # input creates AND activates `.venv`, which makes the README's
+      # `uv venv --python 3.12` fail with "A virtual environment already exists".
+      # Letting the README command create the venv is also the thing under test.
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
           enable-cache: true
+          cache-dependency-glob: "scorer/pyproject.toml"
+          cache-suffix: ${{ runner.os }}
 
-      # README.md#quickstart, verbatim (steps 1 of 1; the dataset steps are not
-      # reproducible in CI without the Google Drive download).
+      # README.md#quickstart, verbatim.  The dataset steps are not reproducible
+      # in CI (the dataset is a private Google Drive download).
       - name: README quickstart install
         run: |
           set -eux
@@ -50,7 +55,6 @@ jobs:
           uv venv --python 3.12
           uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           uv pip install -e 'scorer[test]'
-          .venv/bin/python --version || .venv/Scripts/python.exe --version
 
       - name: Record whether README paths work verbatim on this OS
         run: |
@@ -59,10 +63,11 @@ jobs:
             echo "README-PARITY: .venv/bin/python exists -> README commands run verbatim"
             echo "VENV_PY=.venv/bin/python" >> "$GITHUB_ENV"
           else
-            echo "::warning title=README path mismatch::README.md and scorer/README.md use .venv/bin/python, which does not exist on this runner; using .venv/Scripts/python.exe instead."
+            echo "::warning title=README path mismatch::README.md and scorer/README.md hardcode .venv/bin/python, which does not exist on this runner; using .venv/Scripts/python.exe instead."
             echo "README-PARITY: .venv/bin/python MISSING -> use .venv/Scripts/python.exe"
             echo "VENV_PY=.venv/Scripts/python.exe" >> "$GITHUB_ENV"
           fi
+          echo "venv contents:"; ls .venv
 
       # Cache the ~1.2 GB weight bundle the first score downloads.  The scorer
       # version lives in scorer/pyproject.toml (version = "2.2.0"), so hashing
