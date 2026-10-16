@@ -73,7 +73,8 @@ jobs:
       # version lives in scorer/pyproject.toml (version = "2.2.0"), so hashing
       # it keys the cache on the scorer version and invalidates on any bump.
       - name: Restore scorer model bundle
-        uses: actions/cache@v4
+        id: model-cache
+        uses: actions/cache/restore@v4
         with:
           path: scorer/.models
           key: scorer-models-${{ runner.os }}-${{ hashFiles('scorer/pyproject.toml') }}
@@ -103,3 +104,14 @@ jobs:
         run: |
           set -o pipefail
           "$VENV_PY" .github/smoke_score.py
+
+      # actions/cache only persists its automatic post-step after a successful
+      # job, so a job that fails on a repo defect would re-download the whole
+      # bundle on every re-run.  Save the (now complete) bundle explicitly on a
+      # cold cache, pass or fail.
+      - name: Save scorer model bundle
+        if: always() && steps.model-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: scorer/.models
+          key: scorer-models-${{ runner.os }}-${{ hashFiles('scorer/pyproject.toml') }}
