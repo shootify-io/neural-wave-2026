@@ -1,0 +1,94 @@
+name: smoke
+
+# Cross-platform smoke test for the participant repo: install exactly as the
+# README quickstart says, run the test suites, then score a real pair with the
+# documented CLI.  It is a diagnostic gate, not a scoring run.
+
+on:
+  push:
+    branches: ["ci/smoke"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux x86-64, macOS arm64, Windows x86-64
+        os: [ubuntu-latest, macos-14, windows-latest]
+    defaults:
+      run:
+        # The README quickstart is written for bash; GitHub's Windows runners
+        # ship Git Bash, so one shell keeps the commands identical on all three.
+        shell: bash
+    env:
+      # Pin every test and the CLI at the one model bundle the README documents.
+      SCORER_MODEL_DIR: ${{ github.workspace }}/scorer/.models
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # README.md#quickstart, verbatim (steps 1 of 1; the dataset steps are not
+      # reproducible in CI without the Google Drive download).
+      - name: README quickstart install
+        run: |
+          set -eux
+          uv --version
+          uv venv --python 3.12
+          uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          uv pip install -e 'scorer[test]'
+          .venv/bin/python --version || .venv/Scripts/python.exe --version
+
+      - name: Record whether README paths work verbatim on this OS
+        run: |
+          set -u
+          if [ -x .venv/bin/python ]; then
+            echo "README-PARITY: .venv/bin/python exists -> README commands run verbatim"
+            echo "VENV_PY=.venv/bin/python" >> "$GITHUB_ENV"
+          else
+            echo "::warning title=README path mismatch::README.md and scorer/README.md use .venv/bin/python, which does not exist on this runner; using .venv/Scripts/python.exe instead."
+            echo "README-PARITY: .venv/bin/python MISSING -> use .venv/Scripts/python.exe"
+            echo "VENV_PY=.venv/Scripts/python.exe" >> "$GITHUB_ENV"
+          fi
+
+      # Cache the ~1.2 GB weight bundle the first score downloads.  The scorer
+      # version lives in scorer/pyproject.toml (version = "2.2.0"), so hashing
+      # it keys the cache on the scorer version and invalidates on any bump.
+      - name: Restore scorer model bundle
+        uses: actions/cache@v4
+        with:
+          path: scorer/.models
+          key: scorer-models-${{ runner.os }}-${{ hashFiles('scorer/pyproject.toml') }}
+
+      - name: Warm the model bundle (first use downloads ~1.2 GB)
+        run: |
+          set -eux
+          "$VENV_PY" -c "from sartiq_score.api import Scorer; Scorer(); print('model bundle ready')"
+
+      - name: pytest tests (repo scripts)
+        run: |
+          set -o pipefail
+          "$VENV_PY" -m pytest tests -q
+
+      - name: pytest scorer/tests (frozen scorer)
+        run: |
+          set -o pipefail
+          "$VENV_PY" -m pytest scorer/tests -q
+
+      - name: Scoring smoke test (documented `pair` command)
+        run: |
+          set -o pipefail
+          "$VENV_PY" .github/smoke_score.py
