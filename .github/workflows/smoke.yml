@@ -91,9 +91,15 @@ jobs:
       - name: pytest scorer/tests (frozen scorer)
         run: |
           set -o pipefail
-          "$VENV_PY" -m pytest scorer/tests -q
+          # -rs prints per-test skip reasons, so a platform gap is recorded,
+          # not silently skipped.
+          "$VENV_PY" -m pytest scorer/tests -q -rs
 
+      # Runs even if the suite above failed: the documented `pair` command does
+      # not import sartiq_score.sanity, so a sanity-suite failure on one OS must
+      # not hide whether the scoring path itself works there.
       - name: Scoring smoke test (documented `pair` command)
+        if: always()
         run: |
           set -o pipefail
           "$VENV_PY" .github/smoke_score.py
